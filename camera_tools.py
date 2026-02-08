@@ -12,6 +12,8 @@ Frame = np.ndarray
 FrameProcessor = Callable[[Frame], Frame]
 
 DEFAULT_CAMERA_INDEX = 2
+DEFAULT_FRAME_WIDTH = 1920
+DEFAULT_FRAME_HEIGHT = 1080
 CAPTURE_ROOT = Path("captures")
 PHOTO_DIR = CAPTURE_ROOT / "photos"
 VIDEO_DIR = CAPTURE_ROOT / "videos"
@@ -53,6 +55,19 @@ def _set_capture_property(
         raise RuntimeError(f"Camera {name} is unavailable.")
     if abs(actual - float(value)) > tolerance:
         raise RuntimeError(f"Camera {name} mismatch: requested {value}, got {actual:.2f}.")
+
+
+def _validate_frame_size(frame: Frame, width: int | None, height: int | None) -> None:
+    """Validate the captured frame size against expectations."""
+    actual_height, actual_width = frame.shape[:2]
+    if width is not None and actual_width != width:
+        raise RuntimeError(
+            f"Frame width mismatch: requested {width}, got {actual_width}."
+        )
+    if height is not None and actual_height != height:
+        raise RuntimeError(
+            f"Frame height mismatch: requested {height}, got {actual_height}."
+        )
 
 
 def open_camera(
@@ -262,8 +277,8 @@ def capture_photo(
     output_dir: Path = PHOTO_DIR,
     prefix: str = "photo_",
     suffix: str = ".jpg",
-    width: int | None = None,
-    height: int | None = None,
+    width: int | None = DEFAULT_FRAME_WIDTH,
+    height: int | None = DEFAULT_FRAME_HEIGHT,
     fps: float | None = None,
     processing_steps: Sequence[FrameProcessor] | None = None,
 ) -> Path:
@@ -271,6 +286,7 @@ def capture_photo(
     capture = open_camera(camera_index, width=width, height=height, fps=fps)
     try:
         frame = capture_frame(capture)
+        _validate_frame_size(frame, width, height)
     finally:
         capture.release()
 
@@ -293,8 +309,8 @@ def record_video(
     suffix: str = ".mp4",
     duration_seconds: float,
     fps: float | None = None,
-    width: int | None = None,
-    height: int | None = None,
+    width: int | None = DEFAULT_FRAME_WIDTH,
+    height: int | None = DEFAULT_FRAME_HEIGHT,
     codec: str = "mp4v",
     processing_steps: Sequence[FrameProcessor] | None = None,
 ) -> Path:
@@ -313,6 +329,7 @@ def record_video(
             raise RuntimeError("Camera FPS is unavailable; pass fps= to record_video.")
 
         first_frame = capture_frame(capture)
+        _validate_frame_size(first_frame, width, height)
         if processing_steps:
             first_frame = apply_pipeline(first_frame, processing_steps)
         if first_frame.ndim != 3 or first_frame.shape[2] != 3:

@@ -12,6 +12,13 @@ wheels/
 # Camera outputs
 captures/
 photo.jpg
+photo_*.jpg
 
 # Test artifacts
 test_results/
+
+# Environment files
+.env
+
+# ADK artifacts
+.adk/

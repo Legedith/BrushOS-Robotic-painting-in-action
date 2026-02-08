@@ -19,6 +19,7 @@ test_results/
 
 # Environment files
 .env
+api.k
 
 # ADK artifacts
 .adk/

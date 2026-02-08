@@ -12,3 +12,6 @@ wheels/
 # Camera outputs
 captures/
 photo.jpg
+
+# Test artifacts
+test_results/

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,8 @@ DEFAULT_ARM_STEP_M = max(DEFAULT_MOVE_STEP_M, 0.03)
 DEFAULT_ARM_SPEED = 30
 DEFAULT_ARM_IP = "10.10.10.10"
 DEFAULT_ARM_RUN_DIR = Path("captures") / "arm_experiments"
+DEFAULT_CAPTURE_RETRIES = 3
+DEFAULT_CAPTURE_RETRY_DELAY_S = 0.2
 
 
 def _resolve_ip(ip: str | None) -> str:
@@ -62,6 +65,35 @@ def _parse_observation_json(observation_json: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("observation_json must be a JSON object.")
     return payload
+
+
+def _capture_with_retries(
+    *,
+    run_dir: Path,
+    prefix: str,
+    retries: int = DEFAULT_CAPTURE_RETRIES,
+    delay_s: float = DEFAULT_CAPTURE_RETRY_DELAY_S,
+) -> str:
+    """Capture a photo with retries."""
+    if retries < 1:
+        raise ValueError("retries must be >= 1.")
+    if delay_s < 0:
+        raise ValueError("delay_s must be >= 0.")
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return str(
+                capture_photo(
+                    camera_index=DEFAULT_CAMERA_INDEX,
+                    output_dir=run_dir,
+                    prefix=prefix,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt < retries and delay_s:
+                time.sleep(delay_s)
+    raise RuntimeError("Failed to capture photo after retries.") from last_error
 
 
 def arm_get_pose(ip: str | None = None) -> dict[str, object]:
@@ -203,12 +235,9 @@ def run_arm_experiment(
         base_joints = get_joints(robot)
         base_image = None
         if capture_images:
-            base_image = str(
-                capture_photo(
-                    camera_index=DEFAULT_CAMERA_INDEX,
-                    output_dir=run_dir,
-                    prefix="step_00_base_",
-                )
+            base_image = _capture_with_retries(
+                run_dir=run_dir,
+                prefix="step_00_base_",
             )
 
         steps = [
@@ -229,12 +258,9 @@ def run_arm_experiment(
 
             image_path = None
             if capture_images:
-                image_path = str(
-                    capture_photo(
-                        camera_index=DEFAULT_CAMERA_INDEX,
-                        output_dir=run_dir,
-                        prefix=f"step_{index:02d}_{label}_",
-                    )
+                image_path = _capture_with_retries(
+                    run_dir=run_dir,
+                    prefix=f"step_{index:02d}_{label}_",
                 )
 
             record = {

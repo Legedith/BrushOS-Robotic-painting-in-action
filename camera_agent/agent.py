@@ -13,6 +13,21 @@ from google.adk.agents.llm_agent import Agent
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
+from .arm_tools import (
+    append_arm_observation,
+    arm_calibrate_auto,
+    arm_get_joints,
+    arm_get_pose,
+    arm_move_backward,
+    arm_move_down,
+    arm_move_forward,
+    arm_move_left,
+    arm_move_right,
+    arm_move_up,
+    arm_rotate_yaw,
+    read_arm_observations,
+    run_arm_experiment,
+)
 from camera_tools import (
     auto_increment_path,
     capture_photo,
@@ -1024,6 +1039,10 @@ root_agent = Agent(
         "Use get_session_state and set_session_state to read or update session state. "
         "Use search_memory to recall prior sessions, and call add_session_to_memory "
         "after completing a task or when asked to remember. "
+        "You can control the arm with arm_* tools. "
+        "Use run_arm_experiment to collect movement data and camera captures, "
+        "then append_arm_observation to log findings. "
+        "Use read_arm_observations to recall prior experiments. "
         "When a user asks about what is visible, capture a photo first, then analyze it. "
         "Use locate_object to find a region, then crop to focus on that area when needed. "
         "For multi-step edits, create a run folder and use transform_image_with_intermediates "
@@ -1056,6 +1075,19 @@ root_agent = Agent(
         describe_image,
         verify_target,
         locate_object,
+        arm_get_pose,
+        arm_get_joints,
+        arm_calibrate_auto,
+        arm_move_up,
+        arm_move_down,
+        arm_move_left,
+        arm_move_right,
+        arm_move_forward,
+        arm_move_backward,
+        arm_rotate_yaw,
+        run_arm_experiment,
+        append_arm_observation,
+        read_arm_observations,
         get_session_state,
         set_session_state,
         search_memory,

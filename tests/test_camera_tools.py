@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
+import shutil
 import sys
 
 import cv2
@@ -33,11 +34,17 @@ from camera_tools import (
 def result_dir(request: pytest.FixtureRequest) -> Path:
     """Create a per-test results folder."""
     path = Path("test_results") / request.node.name
+    if path.exists():
+        for entry in path.iterdir():
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def make_frame(width: int = 8, height: int = 6) -> np.ndarray:
+def make_frame(width: int = 160, height: int = 120) -> np.ndarray:
     """Create a deterministic test frame."""
     frame = np.zeros((height, width, 3), dtype=np.uint8)
     for y in range(height):
@@ -69,14 +76,14 @@ def test_auto_increment_path_creates_next_index(result_dir: Path, tmp_path: Path
 def test_crop_and_zoom_frame(result_dir: Path) -> None:
     """Crop and zoom frames with predictable outputs."""
     frame = make_frame()
-    cropped = crop_frame(frame, 2, 1, 3, 2)
-    assert cropped.shape == (2, 3, 3)
-    assert (cropped[0, 0] == np.array([20, 10, 15])).all()
+    cropped = crop_frame(frame, 20, 10, 80, 60)
+    assert cropped.shape == (60, 80, 3)
+    assert (cropped[0, 0] == np.array([200, 100, 150])).all()
 
     zoomed = zoom_frame(frame, 2.0)
     assert zoomed.shape == frame.shape
 
-    expected_crop = frame[1:4, 2:6]
+    expected_crop = frame[30:90, 40:120]
     expected_zoom = cv2.resize(
         expected_crop, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR
     )
@@ -88,10 +95,10 @@ def test_crop_and_zoom_frame(result_dir: Path) -> None:
 
 def test_rotate_and_flip_frame(result_dir: Path) -> None:
     """Rotate and flip frames consistently."""
-    frame = make_frame(width=4, height=3)
+    frame = make_frame(width=120, height=80)
     rotated = rotate_frame(frame, 90)
-    assert rotated.shape == (4, 3, 3)
-    assert (rotated[0, 0] == frame[2, 0]).all()
+    assert rotated.shape == (120, 80, 3)
+    assert (rotated[0, 0] == frame[frame.shape[0] - 1, 0]).all()
 
     flipped = flip_frame(frame, "horizontal")
     assert flipped.shape == frame.shape
@@ -104,8 +111,8 @@ def test_rotate_and_flip_frame(result_dir: Path) -> None:
 def test_resize_and_grayscale(result_dir: Path) -> None:
     """Resize and grayscale conversions work."""
     frame = make_frame()
-    resized = resize_frame(frame, 5, 4)
-    assert resized.shape == (4, 5, 3)
+    resized = resize_frame(frame, 100, 75)
+    assert resized.shape == (75, 100, 3)
 
     gray = to_grayscale(frame)
     assert gray.ndim == 2
@@ -118,13 +125,13 @@ def test_resize_and_grayscale(result_dir: Path) -> None:
 
 def test_tone_and_saturation_adjustments(result_dir: Path) -> None:
     """Adjust brightness, contrast, gamma, and saturation."""
-    frame = make_frame(width=3, height=2)
+    frame = make_frame(width=120, height=80)
     bright = adjust_brightness_contrast(frame, brightness=20, contrast=1.2)
     assert bright.shape == frame.shape
     assert bright.dtype == frame.dtype
     assert not np.array_equal(bright, frame)
 
-    gamma_frame = np.full((1, 1, 3), 128, dtype=np.uint8)
+    gamma_frame = np.full((60, 40, 3), 128, dtype=np.uint8)
     gamma_adjusted = adjust_gamma(gamma_frame, 2.0)
     expected_value = int(((128 / 255.0) ** (1.0 / 2.0)) * 255)
     assert abs(int(gamma_adjusted[0, 0, 0]) - expected_value) <= 1
@@ -140,7 +147,7 @@ def test_tone_and_saturation_adjustments(result_dir: Path) -> None:
 
 def test_sharpen_blur_and_pipeline(result_dir: Path) -> None:
     """Apply blur, sharpen, and pipeline transforms."""
-    frame = make_frame(width=6, height=5)
+    frame = make_frame(width=160, height=120)
     blurred = blur_frame(frame, ksize=5)
     sharpened = sharpen_frame(frame, amount=0.8, sigma=1.2)
     assert blurred.shape == frame.shape
@@ -148,8 +155,8 @@ def test_sharpen_blur_and_pipeline(result_dir: Path) -> None:
     assert np.sum(np.abs(blurred.astype(int) - frame.astype(int))) > 0
 
     pipeline = [
-        partial(crop_frame, x=1, y=1, width=4, height=3),
-        partial(resize_frame, width=6, height=5),
+        partial(crop_frame, x=20, y=10, width=100, height=80),
+        partial(resize_frame, width=160, height=120),
     ]
     processed = apply_pipeline(frame, pipeline)
     assert processed.shape == frame.shape

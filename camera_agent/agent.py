@@ -47,7 +47,9 @@ from camera_tools import (
     to_grayscale,
 )
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+from .key_rotation import get_api_keys, with_key_rotation
+
+DEFAULT_MODEL = "gemini-3-flash-preview"
 CONCISE_TEXT_INSTRUCTION = (
     "Respond concisely in plain text. "
     "If a single word or number is sufficient, return only that. "
@@ -57,10 +59,7 @@ CONCISE_TEXT_INSTRUCTION = (
 
 def _ensure_api_key() -> str:
     """Get the Gemini API key from the environment."""
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not set.")
-    return api_key
+    return get_api_keys()[0]
 
 
 def _validate_model(model: str) -> None:
@@ -580,7 +579,7 @@ def analyze_image(
 ) -> dict[str, object]:
     """Analyze an image using Gemini."""
     _validate_model(model)
-    api_key = _ensure_api_key()
+    keys = get_api_keys()
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
@@ -592,19 +591,22 @@ def analyze_image(
         f"Image size: {width}x{height}. "
         f"Question: {question}"
     )
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=image_data, mime_type=mime_type),
-                ],
-            )
-        ],
-    )
+    def _call(api_key: str):
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                    ],
+                )
+            ],
+        )
+
+    response = with_key_rotation(_call, keys)
     text = response.text
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
@@ -623,7 +625,7 @@ def describe_image(
 ) -> dict[str, object]:
     """Describe an image using Gemini."""
     _validate_model(model)
-    api_key = _ensure_api_key()
+    keys = get_api_keys()
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
@@ -636,19 +638,22 @@ def describe_image(
         f"{question}"
     )
 
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=question),
-                    types.Part.from_bytes(data=image_data, mime_type=mime_type),
-                ],
-            )
-        ],
-    )
+    def _call(api_key: str):
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=question),
+                        types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                    ],
+                )
+            ],
+        )
+
+    response = with_key_rotation(_call, keys)
     text = response.text
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
@@ -667,7 +672,7 @@ def verify_target(
 ) -> dict[str, object]:
     """Verify if a target is visible in an image."""
     _validate_model(model)
-    api_key = _ensure_api_key()
+    keys = get_api_keys()
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
@@ -691,20 +696,23 @@ def verify_target(
         temperature=0,
     )
 
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=image_data, mime_type=mime_type),
-                ],
-            )
-        ],
-        config=response_config,
-    )
+    def _call(api_key: str):
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                    ],
+                )
+            ],
+            config=response_config,
+        )
+
+    response = with_key_rotation(_call, keys)
     text = response.text
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
@@ -804,7 +812,7 @@ def _select_target_from_image(
 ) -> dict[str, object]:
     """Select a target item and rotation for an image."""
     _validate_model(model)
-    api_key = _ensure_api_key()
+    keys = get_api_keys()
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
@@ -830,20 +838,23 @@ def _select_target_from_image(
         temperature=0,
     )
 
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=image_data, mime_type=mime_type),
-                ],
-            )
-        ],
-        config=response_config,
-    )
+    def _call(api_key: str):
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                    ],
+                )
+            ],
+            config=response_config,
+        )
+
+    response = with_key_rotation(_call, keys)
     text = response.text
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
@@ -960,7 +971,7 @@ def locate_object(
 ) -> dict[str, object]:
     """Locate an object and return a bounding box."""
     _validate_model(model)
-    api_key = _ensure_api_key()
+    keys = get_api_keys()
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image = _load_image(image_file)
@@ -975,7 +986,6 @@ def locate_object(
         f"Target: {target_description}."
     )
 
-    client = genai.Client(api_key=api_key)
     response_config = types.GenerateContentConfig(
         responseMimeType="application/json",
         responseSchema={
@@ -990,19 +1000,23 @@ def locate_object(
         },
         temperature=0,
     )
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=image_data, mime_type=mime_type),
-                ],
-            )
-        ],
-        config=response_config,
-    )
+    def _call(api_key: str):
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                    ],
+                )
+            ],
+            config=response_config,
+        )
+
+    response = with_key_rotation(_call, keys)
     text = response.text
     if not text:
         raise RuntimeError("Gemini returned an empty response.")

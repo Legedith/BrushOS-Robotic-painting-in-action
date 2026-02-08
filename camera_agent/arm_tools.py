@@ -21,6 +21,7 @@ from niryo_tools import (
     move_forward,
     move_left,
     move_right,
+    move_pose,
     move_up,
     rotate_yaw,
     robot_session,
@@ -123,6 +124,102 @@ def arm_calibrate_auto(ip: str | None = None) -> dict[str, object]:
     with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
         calibrate_auto(robot)
     return {"status": "success"}
+
+
+def arm_set_speed(percentage_speed: int, ip: str | None = None) -> dict[str, object]:
+    """Set the arm speed percentage."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        set_arm_speed(robot, percentage_speed)
+    return {"status": "success"}
+
+
+def arm_update_tool(ip: str | None = None) -> dict[str, object]:
+    """Update the attached tool."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        robot.update_tool()
+        tool_id = robot.get_current_tool_id()
+    return {"status": "success", "tool_id": str(tool_id)}
+
+
+def arm_get_tool_id(ip: str | None = None) -> dict[str, object]:
+    """Get the current tool ID."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        tool_id = robot.get_current_tool_id()
+    return {"status": "success", "tool_id": str(tool_id)}
+
+
+def arm_open_gripper(
+    speed: int = 500,
+    max_torque_percentage: int | None = None,
+    hold_torque_percentage: int | None = None,
+    ip: str | None = None,
+) -> dict[str, object]:
+    """Open the gripper."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        if max_torque_percentage is None or hold_torque_percentage is None:
+            robot.open_gripper(speed=speed)
+        else:
+            robot.open_gripper(
+                speed=speed,
+                max_torque_percentage=max_torque_percentage,
+                hold_torque_percentage=hold_torque_percentage,
+            )
+    return {"status": "success"}
+
+
+def arm_close_gripper(
+    speed: int = 500,
+    max_torque_percentage: int | None = None,
+    hold_torque_percentage: int | None = None,
+    ip: str | None = None,
+) -> dict[str, object]:
+    """Close the gripper."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        if max_torque_percentage is None or hold_torque_percentage is None:
+            robot.close_gripper(speed=speed)
+        else:
+            robot.close_gripper(
+                speed=speed,
+                max_torque_percentage=max_torque_percentage,
+                hold_torque_percentage=hold_torque_percentage,
+            )
+    return {"status": "success"}
+
+
+def arm_grasp_with_tool(ip: str | None = None) -> dict[str, object]:
+    """Grasp with the equipped tool."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        robot.grasp_with_tool()
+    return {"status": "success"}
+
+
+def arm_release_with_tool(ip: str | None = None) -> dict[str, object]:
+    """Release with the equipped tool."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        robot.release_with_tool()
+    return {"status": "success"}
+
+
+def arm_move_joints(
+    joints: list[float],
+    ip: str | None = None,
+) -> dict[str, object]:
+    """Move the robot to joint positions."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        move_joints(robot, joints)
+        pose = get_pose(robot)
+    return {"status": "success", "pose": pose}
+
+
+def arm_move_pose(
+    pose: list[float],
+    ip: str | None = None,
+) -> dict[str, object]:
+    """Move the robot to an absolute pose."""
+    with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
+        move_pose(robot, pose)
+        pose_after = get_pose(robot)
+    return {"status": "success", "pose": pose_after}
 
 
 def arm_move_up(step_m: float = DEFAULT_ARM_STEP_M, ip: str | None = None) -> dict[str, object]:

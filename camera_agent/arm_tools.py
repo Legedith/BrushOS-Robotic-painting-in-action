@@ -15,6 +15,7 @@ from niryo_tools import (
     calibrate_auto,
     get_joints,
     get_pose,
+    move_joints,
     move_backward,
     move_down,
     move_forward,
@@ -36,6 +37,7 @@ DEFAULT_CAPTURE_RETRIES = 3
 DEFAULT_CAPTURE_RETRY_DELAY_S = 0.2
 DEFAULT_CAPTURE_WARMUP_FRAMES = 10
 DEFAULT_CAPTURE_WARMUP_DELAY_S = 0.1
+SAFE_HOME_JOINTS = (0.0, 0.3, -1.3, 0.0, 0.0, 0.0)
 
 
 def _resolve_ip(ip: str | None) -> str:
@@ -237,6 +239,7 @@ def run_arm_experiment(
 
     with robot_session(_resolve_ip(ip), auto_calibrate=True) as robot:
         set_arm_speed(robot, speed)
+        move_joints(robot, SAFE_HOME_JOINTS)
         base_pose = get_pose(robot)
         base_joints = get_joints(robot)
         base_image = None

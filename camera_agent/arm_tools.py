@@ -27,6 +27,7 @@ from niryo_tools import (
     robot_session,
     set_arm_speed,
 )
+from pyniryo.api.enums_communication import Command
 
 from .arm_observations import append_observation, read_observations
 
@@ -157,7 +158,8 @@ def arm_open_gripper(
     """Open the gripper."""
     with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
         if max_torque_percentage is None or hold_torque_percentage is None:
-            robot.open_gripper(speed=speed)
+            sender = robot._NiryoRobot__send_n_receive
+            sender(Command.OPEN_GRIPPER, speed)
         else:
             robot.open_gripper(
                 speed=speed,
@@ -176,7 +178,8 @@ def arm_close_gripper(
     """Close the gripper."""
     with robot_session(_resolve_ip(ip), auto_calibrate=False) as robot:
         if max_torque_percentage is None or hold_torque_percentage is None:
-            robot.close_gripper(speed=speed)
+            sender = robot._NiryoRobot__send_n_receive
+            sender(Command.CLOSE_GRIPPER, speed)
         else:
             robot.close_gripper(
                 speed=speed,

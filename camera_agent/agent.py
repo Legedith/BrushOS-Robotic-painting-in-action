@@ -33,6 +33,11 @@ from camera_tools import (
 )
 
 DEFAULT_MODEL = "gemini-2.5-flash-lite"
+CONCISE_TEXT_INSTRUCTION = (
+    "Respond concisely in plain text. "
+    "If a single word or number is sufficient, return only that. "
+    "If uncertain, respond with 'uncertain'."
+)
 
 
 def _ensure_api_key() -> str:
@@ -564,7 +569,14 @@ def analyze_image(
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
+    image = _load_image(image_file)
+    height, width = image.shape[:2]
 
+    prompt = (
+        f"{CONCISE_TEXT_INSTRUCTION} "
+        f"Image size: {width}x{height}. "
+        f"Question: {question}"
+    )
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
         model=model,
@@ -572,7 +584,7 @@ def analyze_image(
             types.Content(
                 role="user",
                 parts=[
-                    types.Part.from_text(text=question),
+                    types.Part.from_text(text=prompt),
                     types.Part.from_bytes(data=image_data, mime_type=mime_type),
                 ],
             )
@@ -600,7 +612,14 @@ def describe_image(
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
-    question = prompt or "Describe the image in 1-3 sentences."
+    image = _load_image(image_file)
+    height, width = image.shape[:2]
+    question = prompt or "Describe the image in 1-2 short sentences."
+    question = (
+        f"{CONCISE_TEXT_INSTRUCTION} "
+        f"Image size: {width}x{height}. "
+        f"{question}"
+    )
 
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
@@ -640,6 +659,7 @@ def verify_target(
 
     prompt = (
         "Return JSON only. Determine if the target is clearly visible. "
+        "Keep notes under 12 words. "
         f"Target: {target_description}."
     )
     response_config = types.GenerateContentConfig(
@@ -773,11 +793,14 @@ def _select_target_from_image(
     image_file = Path(image_path)
     mime_type = _detect_mime_type(image_file)
     image_data = image_file.read_bytes()
+    image = _load_image(image_file)
+    height, width = image.shape[:2]
 
     prompt = (
         "Pick one visually prominent item to focus on. "
-        "Return JSON with target_description (short, specific) and rotation_degrees "
-        "(0, 90, 180, or 270) to make the item upright."
+        "Return JSON only with target_description (3-8 words, specific) and "
+        "rotation_degrees (0, 90, 180, or 270) to make the item upright. "
+        f"Image size is {width}x{height}."
     )
     response_config = types.GenerateContentConfig(
         responseMimeType="application/json",
@@ -932,6 +955,7 @@ def locate_object(
     prompt = (
         "Return JSON only with keys x, y, width, height. "
         "Use pixel coordinates within the image, with origin at top-left. "
+        "Use a tight bounding box with no padding. "
         f"Image size is {width}x{height}. "
         f"Target: {target_description}."
     )
@@ -996,6 +1020,7 @@ root_agent = Agent(
     description="Agent that captures and analyzes camera images.",
     instruction=(
         "You can capture photos, transform them, and answer visual questions. "
+        "Keep responses concise and only include the information requested. "
         "Use get_session_state and set_session_state to read or update session state. "
         "Use search_memory to recall prior sessions, and call add_session_to_memory "
         "after completing a task or when asked to remember. "

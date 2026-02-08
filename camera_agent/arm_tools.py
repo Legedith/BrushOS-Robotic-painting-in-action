@@ -34,6 +34,8 @@ DEFAULT_ARM_IP = "10.10.10.10"
 DEFAULT_ARM_RUN_DIR = Path("captures") / "arm_experiments"
 DEFAULT_CAPTURE_RETRIES = 3
 DEFAULT_CAPTURE_RETRY_DELAY_S = 0.2
+DEFAULT_CAPTURE_WARMUP_FRAMES = 10
+DEFAULT_CAPTURE_WARMUP_DELAY_S = 0.1
 
 
 def _resolve_ip(ip: str | None) -> str:
@@ -73,6 +75,8 @@ def _capture_with_retries(
     prefix: str,
     retries: int = DEFAULT_CAPTURE_RETRIES,
     delay_s: float = DEFAULT_CAPTURE_RETRY_DELAY_S,
+    warmup_frames: int = DEFAULT_CAPTURE_WARMUP_FRAMES,
+    warmup_delay_s: float = DEFAULT_CAPTURE_WARMUP_DELAY_S,
 ) -> str:
     """Capture a photo with retries."""
     if retries < 1:
@@ -87,6 +91,8 @@ def _capture_with_retries(
                     camera_index=DEFAULT_CAMERA_INDEX,
                     output_dir=run_dir,
                     prefix=prefix,
+                    warmup_frames=warmup_frames,
+                    warmup_delay_s=warmup_delay_s,
                 )
             )
         except Exception as exc:  # noqa: BLE001

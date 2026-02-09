@@ -1,4 +1,4 @@
-# BrushOS — Text-to-Physical Drawing with Gemini 3
+# BrushOS : Text-to-Physical Drawing with Gemini 3
 
 **Not text-to-image. Text-to-drawing.** BrushOS is a Gemini 3 agent that controls a **camera + robot arm** to paint **real ink on real paper**, then re-observes the result and keeps improving it via structured tool calls.
 

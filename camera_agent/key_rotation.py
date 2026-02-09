@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Callable, Iterable, TypeVar
 
 T = TypeVar("T")
@@ -37,15 +38,38 @@ def is_quota_error(exc: Exception) -> bool:
     return False
 
 
-def with_key_rotation(call: Callable[[str], T], keys: Iterable[str] | None = None) -> T:
-    """Execute a call with key rotation on quota errors."""
+def is_retryable_error(exc: Exception) -> bool:
+    """Detect retryable API errors."""
+    if is_quota_error(exc):
+        return True
+    message = str(exc)
+    status = getattr(exc, "status_code", None)
+    if status == 503:
+        return True
+    if "UNAVAILABLE" in message or "overloaded" in message:
+        return True
+    return False
+
+
+def with_key_rotation(
+    call: Callable[[str], T],
+    keys: Iterable[str] | None = None,
+    *,
+    retries_per_key: int = 2,
+    retry_delay_s: float = 1.0,
+) -> T:
+    """Execute a call with key rotation on retryable errors."""
     key_list = list(keys) if keys is not None else get_api_keys()
     last_error: Exception | None = None
     for key in key_list:
-        try:
-            return call(key)
-        except Exception as exc:  # noqa: BLE001
-            if not is_quota_error(exc):
-                raise
-            last_error = exc
-    raise RuntimeError("All API keys are exhausted.") from last_error
+        for attempt in range(retries_per_key):
+            try:
+                return call(key)
+            except Exception as exc:  # noqa: BLE001
+                if not is_retryable_error(exc):
+                    raise
+                last_error = exc
+                if attempt < retries_per_key - 1:
+                    time.sleep(retry_delay_s)
+        continue
+    raise RuntimeError("All API keys are exhausted or unavailable.") from last_error

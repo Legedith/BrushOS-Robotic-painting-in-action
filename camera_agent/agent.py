@@ -16,15 +16,32 @@ from google.genai import types
 from .arm_tools import (
     append_arm_observation,
     arm_calibrate_auto,
+    arm_close_gripper,
+    arm_draw_strokes,
+    arm_get_tool_id,
     arm_get_joints,
     arm_get_pose,
     arm_move_backward,
     arm_move_down,
     arm_move_forward,
+    arm_move_joints,
     arm_move_left,
+    arm_move_pose,
     arm_move_right,
     arm_move_up,
+    arm_refill_paint,
     arm_rotate_yaw,
+    arm_release_with_tool,
+    arm_set_speed,
+    arm_grasp_with_tool,
+    arm_open_gripper,
+    arm_update_tool,
+    build_arc_stroke,
+    build_bezier_stroke,
+    build_circle_stroke,
+    build_s_curve_stroke,
+    concat_strokes,
+    transform_strokes,
     read_arm_observations,
     run_arm_experiment,
 )
@@ -52,7 +69,7 @@ from .key_rotation import get_api_keys, with_key_rotation
 DEFAULT_MODEL = "gemini-3-flash-preview"
 CONCISE_TEXT_INSTRUCTION = (
     "Respond concisely in plain text. "
-    "If a single word or number is sufficient, return only that. "
+    "Include only the details needed to answer the question. "
     "If uncertain, respond with 'uncertain'."
 )
 
@@ -91,6 +108,20 @@ def _load_image(path: Path) -> Any:
     if image is None:
         raise RuntimeError(f"Failed to read image: {path}")
     return image
+
+
+def _image_error(image_path: str, exc: Exception) -> dict[str, object]:
+    """Return a structured image error response."""
+    if isinstance(exc, FileNotFoundError):
+        error = "image_not_found"
+    else:
+        error = "image_read_failed"
+    return {
+        "status": "error",
+        "error": error,
+        "path": image_path,
+        "message": str(exc),
+    }
 
 
 def _resolve_output_path(
@@ -159,6 +190,31 @@ def _parse_state_keys(keys_json: str) -> list[str]:
     return keys
 
 
+def _parse_bbox_json(bbox_json: str, label: str) -> dict[str, float]:
+    """Parse a bounding box JSON payload."""
+    try:
+        payload = json.loads(bbox_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON.") from exc
+    required = {"x", "y", "width", "height"}
+    if not isinstance(payload, dict) or not required.issubset(payload):
+        raise ValueError(f"{label} must contain x, y, width, height.")
+    width = float(payload["width"])
+    height = float(payload["height"])
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{label} width/height must be positive.")
+    x = float(payload["x"])
+    y = float(payload["y"])
+    return {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "center_x": x + width / 2,
+        "center_y": y + height / 2,
+    }
+
+
 def _append_state_list(
     tool_context: ToolContext,
     key: str,
@@ -207,6 +263,10 @@ def capture_photo_tool(
 ) -> dict[str, object]:
     """Capture a photo from the camera."""
     extra: dict[str, object] = {}
+    if output_dir is None and tool_context is not None:
+        last_run_dir = tool_context.state.get("last_run_dir")
+        if isinstance(last_run_dir, str) and last_run_dir:
+            output_dir = last_run_dir
     if output_dir is not None:
         extra["output_dir"] = Path(output_dir)
     if color_profile is not None:
@@ -219,6 +279,7 @@ def capture_photo_tool(
     height, width = image.shape[:2]
     if tool_context is not None:
         tool_context.state["last_photo_path"] = str(output_path)
+        tool_context.state["last_image_path"] = str(output_path)
         tool_context.state["last_photo_size"] = {"width": width, "height": height}
         _append_state_list(tool_context, "recent_photos", str(output_path), 5)
     return {
@@ -231,7 +292,10 @@ def capture_photo_tool(
 
 def image_info(image_path: str) -> dict[str, object]:
     """Read image size and channels."""
-    image = _load_image(Path(image_path))
+    try:
+        image = _load_image(Path(image_path))
+    except Exception as exc:  # noqa: BLE001
+        return _image_error(image_path, exc)
     height, width = image.shape[:2]
     channels = 1 if image.ndim == 2 else image.shape[2]
     return {
@@ -581,9 +645,12 @@ def analyze_image(
     _validate_model(model)
     keys = get_api_keys()
     image_file = Path(image_path)
-    mime_type = _detect_mime_type(image_file)
-    image_data = image_file.read_bytes()
-    image = _load_image(image_file)
+    try:
+        mime_type = _detect_mime_type(image_file)
+        image_data = image_file.read_bytes()
+        image = _load_image(image_file)
+    except Exception as exc:  # noqa: BLE001
+        return _image_error(image_path, exc)
     height, width = image.shape[:2]
 
     prompt = (
@@ -627,9 +694,12 @@ def describe_image(
     _validate_model(model)
     keys = get_api_keys()
     image_file = Path(image_path)
-    mime_type = _detect_mime_type(image_file)
-    image_data = image_file.read_bytes()
-    image = _load_image(image_file)
+    try:
+        mime_type = _detect_mime_type(image_file)
+        image_data = image_file.read_bytes()
+        image = _load_image(image_file)
+    except Exception as exc:  # noqa: BLE001
+        return _image_error(image_path, exc)
     height, width = image.shape[:2]
     question = prompt or "Describe the image in 1-2 short sentences."
     question = (
@@ -664,6 +734,78 @@ def describe_image(
     return {"status": "success", "text": text, "model": model}
 
 
+def compare_images(
+    previous_image_path: str,
+    current_image_path: str,
+    prompt: str | None = None,
+    model: str = DEFAULT_MODEL,
+    tool_context: ToolContext | None = None,
+) -> dict[str, object]:
+    """Compare two images and describe differences."""
+    _validate_model(model)
+    keys = get_api_keys()
+    previous_file = Path(previous_image_path)
+    current_file = Path(current_image_path)
+    try:
+        previous_mime = _detect_mime_type(previous_file)
+        current_mime = _detect_mime_type(current_file)
+        previous_data = previous_file.read_bytes()
+        current_data = current_file.read_bytes()
+        previous_image = _load_image(previous_file)
+        current_image = _load_image(current_file)
+    except Exception as exc:  # noqa: BLE001
+        error = "image_not_found" if isinstance(exc, FileNotFoundError) else "image_read_failed"
+        return {
+            "status": "error",
+            "error": error,
+            "previous_path": previous_image_path,
+            "current_path": current_image_path,
+            "message": str(exc),
+        }
+    prev_height, prev_width = previous_image.shape[:2]
+    curr_height, curr_width = current_image.shape[:2]
+
+    question = prompt or (
+        "Compare Image A (previous) and Image B (current). "
+        "Focus on the robot gripper and the orange object. "
+        "Describe how the gripper moved relative to the orange object, "
+        "and whether it is closer, farther, or covering."
+    )
+    question = (
+        "Respond in plain text. "
+        f"Image A size: {prev_width}x{prev_height}. "
+        f"Image B size: {curr_width}x{curr_height}. "
+        f"{question}"
+    )
+
+    def _call(api_key: str):
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(
+            model=model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=question),
+                        types.Part.from_bytes(data=previous_data, mime_type=previous_mime),
+                        types.Part.from_bytes(data=current_data, mime_type=current_mime),
+                    ],
+                )
+            ],
+        )
+
+    response = with_key_rotation(_call, keys)
+    text = response.text
+    if not text:
+        raise RuntimeError("Gemini returned an empty response.")
+    if tool_context is not None:
+        tool_context.state["last_compare_previous"] = previous_image_path
+        tool_context.state["last_compare_current"] = current_image_path
+        tool_context.state["last_compare_model"] = model
+        tool_context.state["last_compare_text"] = text
+    return {"status": "success", "text": text, "model": model}
+
+
 def verify_target(
     image_path: str,
     target_description: str,
@@ -674,8 +816,11 @@ def verify_target(
     _validate_model(model)
     keys = get_api_keys()
     image_file = Path(image_path)
-    mime_type = _detect_mime_type(image_file)
-    image_data = image_file.read_bytes()
+    try:
+        mime_type = _detect_mime_type(image_file)
+        image_data = image_file.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        return _image_error(image_path, exc)
 
     prompt = (
         "Return JSON only. Determine if the target is clearly visible. "
@@ -973,10 +1118,13 @@ def locate_object(
     _validate_model(model)
     keys = get_api_keys()
     image_file = Path(image_path)
-    mime_type = _detect_mime_type(image_file)
-    image = _load_image(image_file)
+    try:
+        mime_type = _detect_mime_type(image_file)
+        image = _load_image(image_file)
+        image_data = image_file.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        return _image_error(image_path, exc)
     height, width = image.shape[:2]
-    image_data = image_file.read_bytes()
 
     prompt = (
         "Return JSON only with keys x, y, width, height. "
@@ -1042,34 +1190,184 @@ def locate_object(
     }
 
 
+def plan_relative_move(
+    target_bbox_json: str,
+    gripper_bbox_json: str,
+    pixel_to_meter: float = 0.0005,
+    margin_px: float = 6.0,
+    min_step_m: float = 0.01,
+    max_step_m: float = 0.07,
+    tool_context: ToolContext | None = None,
+) -> dict[str, object]:
+    """Suggest arm moves so the gripper covers a target."""
+    if pixel_to_meter <= 0:
+        raise ValueError("pixel_to_meter must be > 0.")
+    if margin_px < 0:
+        raise ValueError("margin_px must be >= 0.")
+    if min_step_m <= 0 or max_step_m <= 0 or min_step_m > max_step_m:
+        raise ValueError("Invalid min/max step sizes.")
+
+    target = _parse_bbox_json(target_bbox_json, "target_bbox_json")
+    gripper = _parse_bbox_json(gripper_bbox_json, "gripper_bbox_json")
+    delta_x = target["center_x"] - gripper["center_x"]
+    delta_y = target["center_y"] - gripper["center_y"]
+
+    def _step(pixels: float) -> float:
+        meters = abs(pixels) * pixel_to_meter
+        return max(min_step_m, min(max_step_m, meters))
+
+    moves: list[dict[str, object]] = []
+    if abs(delta_x) > margin_px:
+        if delta_x > 0:
+            moves.append(
+                {
+                    "tool": "arm_move_right",
+                    "step_m": _step(delta_x),
+                    "reason": "Target appears to the gripper's right in the image.",
+                }
+            )
+        else:
+            moves.append(
+                {
+                    "tool": "arm_move_left",
+                    "step_m": _step(delta_x),
+                    "reason": "Target appears to the gripper's left in the image.",
+                }
+            )
+    if abs(delta_y) > margin_px:
+        if delta_y > 0:
+            moves.append(
+                {
+                    "tool": "arm_move_down",
+                    "step_m": _step(delta_y),
+                    "reason": "Target appears lower in the frame; move gripper down.",
+                }
+            )
+        else:
+            moves.append(
+                {
+                    "tool": "arm_move_up",
+                    "step_m": _step(delta_y),
+                    "reason": "Target appears higher; lift the gripper.",
+                }
+            )
+
+    if not moves:
+        moves.append(
+            {
+                "tool": "capture_photo_tool",
+                "reason": "No significant pixel delta; re-check alignment before moving.",
+            }
+        )
+
+    response = {
+        "status": "success",
+        "delta_pixels": {"x": delta_x, "y": delta_y},
+        "recommended_moves": moves,
+        "notes": (
+            "Positive delta_x means the target is right of the gripper. "
+            "Positive delta_y means the target is lower in the image. "
+            "Verify each recommendation by capturing a new photo."
+        ),
+    }
+    if tool_context is not None:
+        tool_context.state["last_move_plan"] = response
+    return response
+
+
 root_agent = Agent(
     name="camera_agent",
     model=DEFAULT_MODEL,
     output_key="last_response",
     description="Agent that captures and analyzes camera images.",
     instruction=(
-        "You can capture photos, transform them, and answer visual questions. "
-        "Keep responses concise and only include the information requested. "
-        "Use get_session_state and set_session_state to read or update session state. "
-        "Use search_memory to recall prior sessions, and call add_session_to_memory "
-        "after completing a task or when asked to remember. "
-        "You can control the arm with arm_* tools. "
-        "Use run_arm_experiment to collect movement data and camera captures, "
-        "then append_arm_observation to log findings. "
-        "Use read_arm_observations to recall prior experiments. "
-        "When a user asks about what is visible, capture a photo first, then analyze it. "
-        "Use locate_object to find a region, then crop to focus on that area when needed. "
-        "For multi-step edits, create a run folder and use transform_image_with_intermediates "
-        "with steps_json (a JSON array of steps). "
-        "When asked to focus on an item, do this sequence: "
-        "1) create_run_folder, 2) capture_photo_tool with output_dir set to that folder, "
-        "3) describe_image to pick a concrete item, "
-        "4) locate_object using that item description, "
-        "5) transform_image_with_intermediates to crop/rotate/zoom, "
-        "6) verify_target on the final crop. "
-        "If verify_target says the item is not present, refine the description and retry. "
-        "Always return file paths for any generated images. "
-        "Context: last_run_dir={last_run_dir?}, last_photo_path={last_photo_path?}."
+        "Mission: capture what the camera sees, reason about the scene, and physically move the Niryo "
+        "gripper (6-DoF) until it covers the user-specified target. Keep responses concise and focused on the "
+        "latest evidence.\n"
+        "\n"
+        "Capabilities overview:\n"
+        "- Camera capture: create_run_folder builds a timestamped workspace, and capture_photo_tool always "
+        "returns an on-disk image path plus width/height. All downstream tools must use these exact paths.\n"
+        "- Vision reasoning: describe_image/analyze_image summarize a single frame, compare_images contrasts "
+        "two captures, locate_object/verify_target/plan_relative_move operate on bounding boxes, and "
+        "transform_image*_ helpers crop or zoom when focusing on subregions.\n"
+        "- Arm & gripper: arm_move_* apply ±0.03–0.05 m relative shifts, arm_move_pose/joints set absolutes, "
+        "arm_open/close_gripper and arm_grasp_with_tool manipulate the tool, and append_arm_observation plus "
+        "read_arm_observations persist experiment logs.\n"
+        "\n"
+        "Coordinate mapping (camera faces the workcell head-on):\n"
+        "- Target appears to the LEFT in the image → move the gripper LEFT (arm_move_left = +Y).\n"
+        "- Target appears to the RIGHT → move RIGHT (arm_move_right = -Y).\n"
+        "- Target appears HIGHER → move UP (arm_move_up = +Z). Target LOWER → move DOWN (-Z).\n"
+        "- Target appears FARTHER (smaller/near top of mat) → move FORWARD (+X). Closer/bottom → move "
+        "BACKWARD (-X). Yaw rotates the wrist to align the gripper orientation.\n"
+        "Always confirm the mapping by comparing consecutive captures. If reality contradicts the mapping, "
+        "invert that axis and note it in movement_history.\n"
+        "\n"
+        "Closed-loop workflow (never skip steps):\n"
+        "1) Start a run with create_run_folder (store path in session state) and capture_photo_tool. "
+        "Always capture before describing or answering any visual question.\n"
+        "2) Use describe_image only to pick concrete labels. Immediately call locate_object at least twice: "
+        "once for the target and once for the gripper/tool so you have bounding boxes.\n"
+        "3) Decide intent. Prefer plan_relative_move(target_bbox_json, gripper_bbox_json) to convert pixel "
+        "offsets into candidate arm_move_* calls. If you reason manually, log intent in session state.\n"
+        "4) Execute exactly one motion tool (arm_move_*, arm_move_pose, arm_rotate_yaw, gripper actions). "
+        "Keep step_m ≤ 0.05 unless repeated evidence shows small moves are insufficient.\n"
+        "5) Immediately capture_photo_tool again using the same run folder. Compare with the previous frame "
+        "using compare_images and/or a fresh locate_object call to measure the result.\n"
+        "6) Log the outcome via append_arm_observation (include move, pose, photo path, and qualitative "
+        "result) and update session state keys: last_move, last_move_intent, last_move_result, "
+        "last_image_path, last_photo_path, movement_history (list of dicts with move/intent/result/path). "
+        "Repeat steps 3–6 until verify_target confirms the target is covered.\n"
+        "\n"
+        "Drawing & paint workflow (poster-scale strokes only):\n"
+        "- Use arm_refill_paint (bowl_top -> bowl_bottom_1 -> bowl_bottom_2 -> bowl_top) before any drawing "
+        "and after every 1-2 strokes. Keep refill_after small; heavy brush needs frequent ink.\n"
+        "- Use build_* tools to generate geometry: build_circle_stroke, build_arc_stroke, build_s_curve_stroke, "
+        "build_bezier_stroke. Combine with transform_strokes and concat_strokes to scale/rotate/translate.\n"
+        "- Use arm_draw_strokes to execute: strokes_json is a JSON list of strokes, each stroke is a list of "
+        "[u, v] points normalized to the paper (u=0 left->1 right, v=0 top->1 bottom).\n"
+        "- Keep strokes BIG: avoid small details or short segments. Prefer steps=1-3, lift_m around 0.02-0.04, "
+        "and long continuous lines. If a stroke is <10% of page width/height, skip it.\n"
+        "- Keep a margin: stay within u/v ~0.08 to 0.92 unless the user explicitly wants edge-to-edge ink.\n"
+        "- Design guidance (no presets):\n"
+        "  * Enso: a large arc (not full circle) with a small intentional gap. Use build_arc_stroke with "
+        "radius ~0.30-0.35 and leave a 20-40 degree gap.\n"
+        "  * Yin-yang: outer circle + S-curve divider + two smaller circles. The S-curve is an offset pair of "
+        "half-circles with radius = outer/2; small circles are radius ~0.18 * outer. Use build_s_curve_stroke "
+        "and build_circle_stroke, then translate/scale.\n"
+        "  * Calligraphy letters/kanji: build from 3-6 long straight or gently curved strokes; avoid tiny hooks.\n"
+        "- After a few strokes, capture_photo_tool and use analyze_image/compare_images to judge coverage. "
+        "If the shape is weak, add another bold stroke rather than many small ones.\n"
+        "\n"
+        "Tool-specific guidance:\n"
+        "- Never use describe_image, compare_images, or locate_object on files that were not captured in the "
+        "current run. If any tool reports image_not_found, capture a new frame and retry.\n"
+        "- plan_relative_move assumes the mapping above and returns a recommended tool + step_m list; follow it "
+        "unless observations contradict it, in which case revise the mapping notes.\n"
+        "- Use transform_image_with_intermediates (with steps_json arrays) whenever you need a series of "
+        "crops/rotations/zooms and keep all intermediates in the run folder.\n"
+        "- Before grasping or applying force, call arm_update_tool, arm_open_gripper, and arm_close_gripper as "
+        "needed, and capture a verification photo.\n"
+        "- run_arm_experiment is available to collect calibration data; review past logs with "
+        "read_arm_observations when planning future moves.\n"
+        "\n"
+        "Recovery & safety rules:\n"
+        "- If two moves along the same axis worsen the alignment, reverse that axis or switch to another axis. "
+        "If camera feedback flips unexpectedly, assume the axis mapping was wrong and invert your plan.\n"
+        "- After every motion, take a new photo before answering the user. Never hallucinate changes.\n"
+        "- If verify_target reports the item missing, refine the description, recapture, and repeat the "
+        "locate_object → plan → move loop.\n"
+        "\n"
+        "Memory usage:\n"
+        "- Use get_session_state/set_session_state as a scratchpad for run metadata (last_run_dir, "
+        "recent_photos, movement_history, last_move_intent/result) and clear or summarize it with "
+        "add_session_to_memory when a task completes. search_memory can revive prior run insights.\n"
+        "\n"
+        "Always return every generated file path (captures, crops, intermediates) plus the run folder path. "
+        "Context snapshot: last_run_dir={last_run_dir?}, last_photo_path={last_photo_path?}, "
+        "last_move={last_move?}, last_move_intent={last_move_intent?}, last_move_result={last_move_result?}, "
+        "last_image_path={last_image_path?}."
     ),
     tools=[
         create_run_folder,
@@ -1087,11 +1385,28 @@ root_agent = Agent(
         focus_item_workflow,
         analyze_image,
         describe_image,
+        compare_images,
         verify_target,
         locate_object,
+        plan_relative_move,
         arm_get_pose,
         arm_get_joints,
         arm_calibrate_auto,
+        arm_set_speed,
+        arm_update_tool,
+        arm_get_tool_id,
+        arm_refill_paint,
+        arm_draw_strokes,
+        arm_open_gripper,
+        arm_close_gripper,
+        arm_grasp_with_tool,
+        arm_release_with_tool,
+        build_circle_stroke,
+        build_arc_stroke,
+        build_s_curve_stroke,
+        build_bezier_stroke,
+        transform_strokes,
+        concat_strokes,
         arm_move_up,
         arm_move_down,
         arm_move_left,
@@ -1099,6 +1414,8 @@ root_agent = Agent(
         arm_move_forward,
         arm_move_backward,
         arm_rotate_yaw,
+        arm_move_joints,
+        arm_move_pose,
         run_arm_experiment,
         append_arm_observation,
         read_arm_observations,

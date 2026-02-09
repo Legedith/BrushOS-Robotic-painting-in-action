@@ -4,7 +4,6 @@
 
 **Demo video (3 min):** TODO  
 **Devpost:** [Project](https://devpost.com/software/brushos-text-to-drawing-in-the-physical-world-with-gemini-3)  
-**Repo:** https://github.com/Legedith/BrushOS-Robotic-painting-in-action
 
 ---
 

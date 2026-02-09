@@ -55,6 +55,13 @@ Key components:
 4. Closed-loop refinement
    The agent captures images before and after drawing, evaluates them, and adds strokes to improve composition.
 
+## Challenges and Fixes
+
+- Thick brush behavior meant thin strokes disappeared. We constrained the agent to large, continuous strokes and frequent refills.
+- Pose accuracy mattered more than expected. We added a dedicated pose-teaching workflow and re-used those four paper corners everywhere.
+- Visual feedback was essential. The agent now captures images after major strokes to decide whether to add or correct.
+- The robot server warned about version mismatch in logs; we kept the pyniryo API pinned to 1.2.3 and documented the requirement to update robot firmware when possible.
+
 ## How to Run
 
 ### 1) Install dependencies

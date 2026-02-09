@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from _bootstrap import add_repo_root
+add_repo_root()
+
+
 import argparse
 import json
 import math
@@ -103,130 +107,49 @@ def move_line(
         move_and_pause(robot, pose, pause_s, dry_run)
 
 
-def stroke_polyline(
-    robot,
-    points: list[tuple[float, float]],
-    *,
-    tl: list[float],
-    tr: list[float],
-    bl: list[float],
-    br: list[float],
-    lift_m: float,
-    steps: int,
-    pause_s: float,
-    dry_run: bool,
-) -> None:
-    if len(points) < 2:
-        return
-
-    start_pose = bilinear_pose(tl, tr, bl, br, points[0][0], points[0][1])
-    move_and_pause(robot, lift_pose(start_pose, lift_m), pause_s, dry_run)
-    move_and_pause(robot, start_pose, pause_s, dry_run)
-
-    for (u0, v0), (u1, v1) in zip(points, points[1:]):
-        p0 = bilinear_pose(tl, tr, bl, br, u0, v0)
-        p1 = bilinear_pose(tl, tr, bl, br, u1, v1)
-        move_line(robot, p0, p1, steps, pause_s, dry_run)
-
-    end_pose = bilinear_pose(tl, tr, bl, br, points[-1][0], points[-1][1])
-    move_and_pause(robot, lift_pose(end_pose, lift_m), pause_s, dry_run)
+def map_local_to_paper(u: float, v: float, box: tuple[float, float, float, float]) -> tuple[float, float]:
+    u0, v0, u1, v1 = box
+    return (lerp(u0, u1, u), lerp(v0, v1, v))
 
 
-def circle_points(center: tuple[float, float], radius: float, segments: int) -> list[tuple[float, float]]:
-    points: list[tuple[float, float]] = []
-    for i in range(segments + 1):
+def circle_points(segments: int) -> list[tuple[float, float]]:
+    points = []
+    for i in range(segments):
         angle = 2 * math.pi * i / segments
-        u = center[0] + radius * math.cos(angle)
-        v = center[1] + radius * math.sin(angle)
+        u = 0.5 + 0.45 * math.cos(angle)
+        v = 0.5 + 0.45 * math.sin(angle)
         points.append((u, v))
+    points.append(points[0])
     return points
-
-
-def s_curve_points(
-    center: tuple[float, float],
-    radius: float,
-    segments: int,
-) -> list[tuple[float, float]]:
-    cx, cy = center
-    r = radius / 2
-    points: list[tuple[float, float]] = []
-
-    # Upper half: right-side arc from top to center.
-    for i in range(segments + 1):
-        t = i / segments
-        angle = math.radians(90 - 180 * t)
-        u = cx + r * math.cos(angle)
-        v = (cy - r) + r * math.sin(angle)
-        points.append((u, v))
-
-    # Lower half: left-side arc from center to bottom.
-    for i in range(segments + 1):
-        t = i / segments
-        angle = math.radians(90 + 180 * t)
-        u = cx + r * math.cos(angle)
-        v = (cy + r) + r * math.sin(angle)
-        points.append((u, v))
-    return points
-
-
-KANJI_STROKES: dict[str, list[list[tuple[float, float]]]] = {
-    "山": [
-        [(0.2, 0.05), (0.2, 0.95)],
-        [(0.5, 0.0), (0.5, 0.95)],
-        [(0.8, 0.05), (0.8, 0.95)],
-        [(0.2, 0.95), (0.8, 0.95)],
-    ],
-    "川": [
-        [(0.2, 0.05), (0.2, 0.95)],
-        [(0.5, 0.05), (0.5, 0.95)],
-        [(0.8, 0.05), (0.8, 0.95)],
-    ],
-}
-
-
-def layout_kanji(
-    characters: list[str],
-    boxes: list[tuple[float, float, float, float]],
-) -> list[list[tuple[float, float]]]:
-    strokes: list[list[tuple[float, float]]] = []
-    for char, box in zip(characters, boxes):
-        glyph = KANJI_STROKES.get(char)
-        if not glyph:
-            continue
-        u0, v0, u1, v1 = box
-        for stroke in glyph:
-            transformed = [(lerp(u0, u1, x), lerp(v0, v1, y)) for x, y in stroke]
-            strokes.append(transformed)
-    return strokes
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Big yin-yang poster with kanji strokes.")
+    parser = argparse.ArgumentParser(description="Paint demo using named poses.")
     parser.add_argument("--ip", default=None, help="Robot IP (overrides NIRYO_ROBOT_IP).")
-    parser.add_argument("--poses-file", default="poses.json", help="Path to poses JSON.")
+    parser.add_argument("--poses-file", default="data/poses.json", help="Path to poses JSON.")
     parser.add_argument(
         "--pause",
         type=float,
-        default=0.12,
+        default=0.2,
         help="Seconds to pause between waypoint moves.",
     )
     parser.add_argument(
         "--lift",
         type=float,
-        default=0.03,
+        default=0.02,
         help="Lift distance in meters between strokes.",
     )
     parser.add_argument(
         "--steps",
         type=int,
-        default=2,
-        help="Waypoints per line segment (small to keep strokes bold).",
+        default=8,
+        help="Waypoints per line segment.",
     )
     parser.add_argument(
         "--refill-after",
         type=int,
-        default=1,
-        help="Refill after this many strokes on paper.",
+        default=2,
+        help="Refill after this many line segments on paper.",
     )
     parser.add_argument(
         "--speed",
@@ -284,60 +207,73 @@ def main() -> int:
         ensure_learning_mode_off=True,
     )
 
-    # Big taiji in the upper half.
-    center = (0.5, 0.33)
-    radius = 0.28
-    strokes: list[list[tuple[float, float]]] = [
-        circle_points(center, radius, 48),
-        circle_points(center, radius - 0.015, 48),
-        s_curve_points(center, radius, 24),
-        s_curve_points(center, radius - 0.015, 24),
-        circle_points((center[0], center[1] - radius / 2), radius * 0.18, 20),
-        circle_points((center[0], center[1] + radius / 2), radius * 0.18, 20),
-    ]
-
-    # Two large kanji below: 山 (mountain) and 川 (river).
-    strokes.extend(
-        layout_kanji(
-            ["山", "川"],
+    shapes: list[tuple[str, list[list[tuple[float, float]]], tuple[float, float, float, float]]] = [
+        (
+            "X",
             [
-                (0.18, 0.62, 0.82, 0.78),
-                (0.18, 0.80, 0.82, 0.96),
+                [(0.0, 0.0), (1.0, 1.0)],
+                [(1.0, 0.0), (0.0, 1.0)],
             ],
-        )
-    )
+            (0.08, 0.08, 0.45, 0.45),
+        ),
+        (
+            "O",
+            [circle_points(12)],
+            (0.55, 0.08, 0.92, 0.45),
+        ),
+        (
+            "L",
+            [[(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)]],
+            (0.08, 0.55, 0.45, 0.92),
+        ),
+        (
+            "Triangle",
+            [[(0.5, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.0)]],
+            (0.55, 0.55, 0.92, 0.92),
+        ),
+    ]
 
     try:
         if args.speed is not None:
             set_arm_speed(robot, args.speed)
 
-        print("Starting yin-yang poster.")
+        segment_counter = 0
+        print("Starting paint demo.")
         dip_paint(robot, bowl_top, bowl_bottom_1, bowl_bottom_2, args.pause, args.dry_run)
 
-        stroke_count = 0
-        for stroke in strokes:
-            if stroke_count >= args.refill_after:
-                print("Refilling paint ...")
-                dip_paint(
-                    robot, bowl_top, bowl_bottom_1, bowl_bottom_2, args.pause, args.dry_run
-                )
-                stroke_count = 0
+        for shape_name, strokes, box in shapes:
+            print(f"Drawing {shape_name} ...")
+            for stroke in strokes:
+                if len(stroke) < 2:
+                    continue
 
-            stroke_polyline(
-                robot,
-                stroke,
-                tl=tl,
-                tr=tr,
-                bl=bl,
-                br=br,
-                lift_m=args.lift,
-                steps=args.steps,
-                pause_s=args.pause,
-                dry_run=args.dry_run,
-            )
-            stroke_count += 1
+                start_u, start_v = map_local_to_paper(stroke[0][0], stroke[0][1], box)
+                start_pose = bilinear_pose(tl, tr, bl, br, start_u, start_v)
 
-        print("Poster complete.")
+                move_and_pause(robot, lift_pose(start_pose, args.lift), args.pause, args.dry_run)
+                move_and_pause(robot, start_pose, args.pause, args.dry_run)
+
+                for (u0, v0), (u1, v1) in zip(stroke, stroke[1:]):
+                    global_u0, global_v0 = map_local_to_paper(u0, v0, box)
+                    global_u1, global_v1 = map_local_to_paper(u1, v1, box)
+                    p0 = bilinear_pose(tl, tr, bl, br, global_u0, global_v0)
+                    p1 = bilinear_pose(tl, tr, bl, br, global_u1, global_v1)
+                    move_line(robot, p0, p1, args.steps, args.pause, args.dry_run)
+                    segment_counter += 1
+
+                    if segment_counter >= args.refill_after:
+                        print("Refilling paint ...")
+                        move_and_pause(robot, lift_pose(p1, args.lift), args.pause, args.dry_run)
+                        dip_paint(
+                            robot, bowl_top, bowl_bottom_1, bowl_bottom_2, args.pause, args.dry_run
+                        )
+                        segment_counter = 0
+
+                end_u, end_v = map_local_to_paper(stroke[-1][0], stroke[-1][1], box)
+                end_pose = bilinear_pose(tl, tr, bl, br, end_u, end_v)
+                move_and_pause(robot, lift_pose(end_pose, args.lift), args.pause, args.dry_run)
+
+        print("Demo complete.")
     finally:
         close_robot(robot)
 

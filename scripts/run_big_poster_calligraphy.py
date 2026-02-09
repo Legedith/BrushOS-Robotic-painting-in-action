@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from _bootstrap import add_repo_root
+add_repo_root()
+
+
 import argparse
 import json
 import math
@@ -103,49 +107,122 @@ def move_line(
         move_and_pause(robot, pose, pause_s, dry_run)
 
 
-def map_local_to_paper(u: float, v: float, box: tuple[float, float, float, float]) -> tuple[float, float]:
-    u0, v0, u1, v1 = box
-    return (lerp(u0, u1, u), lerp(v0, v1, v))
+def stroke_polyline(
+    robot,
+    points: list[tuple[float, float]],
+    *,
+    tl: list[float],
+    tr: list[float],
+    bl: list[float],
+    br: list[float],
+    lift_m: float,
+    steps: int,
+    pause_s: float,
+    dry_run: bool,
+) -> None:
+    if len(points) < 2:
+        return
+
+    start_pose = bilinear_pose(tl, tr, bl, br, points[0][0], points[0][1])
+    move_and_pause(robot, lift_pose(start_pose, lift_m), pause_s, dry_run)
+    move_and_pause(robot, start_pose, pause_s, dry_run)
+
+    for (u0, v0), (u1, v1) in zip(points, points[1:]):
+        p0 = bilinear_pose(tl, tr, bl, br, u0, v0)
+        p1 = bilinear_pose(tl, tr, bl, br, u1, v1)
+        move_line(robot, p0, p1, steps, pause_s, dry_run)
+
+    end_pose = bilinear_pose(tl, tr, bl, br, points[-1][0], points[-1][1])
+    move_and_pause(robot, lift_pose(end_pose, lift_m), pause_s, dry_run)
 
 
-def circle_points(segments: int) -> list[tuple[float, float]]:
-    points = []
-    for i in range(segments):
+def circle_points(
+    center: tuple[float, float],
+    radius: float,
+    segments: int,
+) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for i in range(segments + 1):
         angle = 2 * math.pi * i / segments
-        u = 0.5 + 0.45 * math.cos(angle)
-        v = 0.5 + 0.45 * math.sin(angle)
+        u = center[0] + radius * math.cos(angle)
+        v = center[1] + radius * math.sin(angle)
         points.append((u, v))
-    points.append(points[0])
     return points
 
 
+GLYPHS: dict[str, list[list[tuple[float, float]]]] = {
+    "Z": [[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]],
+    "E": [[(1.0, 0.0), (0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.0, 0.5), (0.8, 0.5)]],
+    "N": [[(0.0, 1.0), (0.0, 0.0), (1.0, 1.0), (1.0, 0.0)]],
+    "A": [[(0.0, 1.0), (0.5, 0.0), (1.0, 1.0), (0.75, 0.6), (0.25, 0.6)]],
+    "O": [circle_points((0.5, 0.5), 0.48, 16)],
+    "I": [[(0.5, 0.0), (0.5, 1.0)]],
+    "K": [[(0.0, 0.0), (0.0, 1.0), (0.0, 0.5), (1.0, 0.0), (0.0, 0.5), (1.0, 1.0)]],
+    "S": [[(1.0, 0.0), (0.2, 0.0), (0.0, 0.2), (0.0, 0.5), (1.0, 0.5), (1.0, 0.8), (0.8, 1.0), (0.0, 1.0)]],
+    "T": [[(0.0, 0.0), (1.0, 0.0), (0.5, 0.0), (0.5, 1.0)]],
+}
+
+
+def layout_vertical_word(
+    word: str,
+    box: tuple[float, float, float, float],
+    gap: float,
+) -> list[list[tuple[float, float]]]:
+    word = word.upper()
+    u0, v0, u1, v1 = box
+    height = v1 - v0
+    usable = height - gap * (len(word) - 1)
+    if usable <= 0:
+        raise ValueError("Word is too long for the page height.")
+    letter_h = usable / len(word)
+    strokes: list[list[tuple[float, float]]] = []
+
+    for idx, char in enumerate(word):
+        glyph = GLYPHS.get(char)
+        if not glyph:
+            continue
+        top = v0 + idx * (letter_h + gap)
+        bottom = top + letter_h
+        for stroke in glyph:
+            transformed = [
+                (lerp(u0, u1, x), lerp(top, bottom, y)) for x, y in stroke
+            ]
+            strokes.append(transformed)
+    return strokes
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Paint demo using named poses.")
+    parser = argparse.ArgumentParser(description="Huge vertical brush poster.")
     parser.add_argument("--ip", default=None, help="Robot IP (overrides NIRYO_ROBOT_IP).")
-    parser.add_argument("--poses-file", default="poses.json", help="Path to poses JSON.")
+    parser.add_argument("--poses-file", default="data/poses.json", help="Path to poses JSON.")
+    parser.add_argument(
+        "--word",
+        default="ZEN",
+        help="Word to render using big strokes (supported letters: A E I K N O S T Z).",
+    )
     parser.add_argument(
         "--pause",
         type=float,
-        default=0.2,
+        default=0.12,
         help="Seconds to pause between waypoint moves.",
     )
     parser.add_argument(
         "--lift",
         type=float,
-        default=0.02,
+        default=0.03,
         help="Lift distance in meters between strokes.",
     )
     parser.add_argument(
         "--steps",
         type=int,
-        default=8,
-        help="Waypoints per line segment.",
+        default=2,
+        help="Waypoints per line segment (small to keep strokes bold).",
     )
     parser.add_argument(
         "--refill-after",
         type=int,
-        default=2,
-        help="Refill after this many line segments on paper.",
+        default=1,
+        help="Refill after this many strokes on paper.",
     )
     parser.add_argument(
         "--speed",
@@ -203,73 +280,40 @@ def main() -> int:
         ensure_learning_mode_off=True,
     )
 
-    shapes: list[tuple[str, list[list[tuple[float, float]]], tuple[float, float, float, float]]] = [
-        (
-            "X",
-            [
-                [(0.0, 0.0), (1.0, 1.0)],
-                [(1.0, 0.0), (0.0, 1.0)],
-            ],
-            (0.08, 0.08, 0.45, 0.45),
-        ),
-        (
-            "O",
-            [circle_points(12)],
-            (0.55, 0.08, 0.92, 0.45),
-        ),
-        (
-            "L",
-            [[(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)]],
-            (0.08, 0.55, 0.45, 0.92),
-        ),
-        (
-            "Triangle",
-            [[(0.5, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.0)]],
-            (0.55, 0.55, 0.92, 0.92),
-        ),
-    ]
-
     try:
         if args.speed is not None:
             set_arm_speed(robot, args.speed)
 
-        segment_counter = 0
-        print("Starting paint demo.")
+        strokes = layout_vertical_word(args.word, (0.2, 0.08, 0.8, 0.92), gap=0.05)
+        if not strokes:
+            raise ValueError("No supported letters in --word.")
+
+        print(f"Starting poster calligraphy for '{args.word.upper()}'.")
         dip_paint(robot, bowl_top, bowl_bottom_1, bowl_bottom_2, args.pause, args.dry_run)
 
-        for shape_name, strokes, box in shapes:
-            print(f"Drawing {shape_name} ...")
-            for stroke in strokes:
-                if len(stroke) < 2:
-                    continue
+        stroke_count = 0
+        for stroke in strokes:
+            if stroke_count >= args.refill_after:
+                print("Refilling paint ...")
+                dip_paint(
+                    robot, bowl_top, bowl_bottom_1, bowl_bottom_2, args.pause, args.dry_run
+                )
+                stroke_count = 0
+            stroke_polyline(
+                robot,
+                stroke,
+                tl=tl,
+                tr=tr,
+                bl=bl,
+                br=br,
+                lift_m=args.lift,
+                steps=args.steps,
+                pause_s=args.pause,
+                dry_run=args.dry_run,
+            )
+            stroke_count += 1
 
-                start_u, start_v = map_local_to_paper(stroke[0][0], stroke[0][1], box)
-                start_pose = bilinear_pose(tl, tr, bl, br, start_u, start_v)
-
-                move_and_pause(robot, lift_pose(start_pose, args.lift), args.pause, args.dry_run)
-                move_and_pause(robot, start_pose, args.pause, args.dry_run)
-
-                for (u0, v0), (u1, v1) in zip(stroke, stroke[1:]):
-                    global_u0, global_v0 = map_local_to_paper(u0, v0, box)
-                    global_u1, global_v1 = map_local_to_paper(u1, v1, box)
-                    p0 = bilinear_pose(tl, tr, bl, br, global_u0, global_v0)
-                    p1 = bilinear_pose(tl, tr, bl, br, global_u1, global_v1)
-                    move_line(robot, p0, p1, args.steps, args.pause, args.dry_run)
-                    segment_counter += 1
-
-                    if segment_counter >= args.refill_after:
-                        print("Refilling paint ...")
-                        move_and_pause(robot, lift_pose(p1, args.lift), args.pause, args.dry_run)
-                        dip_paint(
-                            robot, bowl_top, bowl_bottom_1, bowl_bottom_2, args.pause, args.dry_run
-                        )
-                        segment_counter = 0
-
-                end_u, end_v = map_local_to_paper(stroke[-1][0], stroke[-1][1], box)
-                end_pose = bilinear_pose(tl, tr, bl, br, end_u, end_v)
-                move_and_pause(robot, lift_pose(end_pose, args.lift), args.pause, args.dry_run)
-
-        print("Demo complete.")
+        print("Poster calligraphy complete.")
     finally:
         close_robot(robot)
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from _bootstrap import add_repo_root
+add_repo_root()
+
+
 from camera_tools import DEFAULT_CAMERA_INDEX, capture_photo
 
 

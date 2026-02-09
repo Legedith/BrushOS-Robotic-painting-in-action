@@ -20,14 +20,14 @@ Cave art v2: the agent added a sun and ground line to improve composition.
 ![Cave art v3](docs/evidence/final_cave_art_v3.jpg)
 Cave art v3: final pass with birds + mountains for scene depth.
 
-Run transcript snippets are in `run.logs`. Example excerpt showing the agent generating strokes and executing them:
+Run transcript snippets are in `docs/logs/run.logs`. Example excerpt showing the agent generating strokes and executing them:
 
 ```text
 Tool call: build_bezier_stroke {"p0_u": 0.35, "p0_v": 0.45, ...}
 Tool call: concat_strokes {"strokes_json": "[[[0.7,0.45],[0.75,0.55],[0.7,0.6]], ...]"}
 Tool call: arm_draw_strokes {"strokes_json": "[[[0.35,0.45],...]]", "refill_after": 2}
 Tool call: capture_photo_tool {"prefix": "final_cave_art_result", "output_dir": "captures\\agent_runs\\20260209_183722_draw_square_in_air"}
-Tool output: arm_draw_strokes {"status": "success", "strokes": 8, "poses_file": "poses.json"}
+Tool output: arm_draw_strokes {"status": "success", "strokes": 8, "poses_file": "data/poses.json"}
 ```
 
 ## System Overview
@@ -35,16 +35,16 @@ Tool output: arm_draw_strokes {"status": "success", "strokes": 8, "poses_file": 
 Core idea: represent all drawing strokes as normalized 2D points on the paper (u=0..1, v=0..1). Convert those to real robot poses using four taught corner poses. Then move the arm along those curves while refilling paint on a schedule.
 
 Key components:
-- `teach_poses.py`: teaches named poses (paper corners + bowl) into `poses.json`.
+- `scripts/teach_poses.py`: teaches named poses (paper corners + bowl) into `data/poses.json`.
 - `camera_agent/arm_tools.py`: drawing + refill primitives.
 - `camera_agent/agent.py`: the interactive agent with vision + motion + drawing guidance.
-- `run_camera_agent_interactive.py`: interactive REPL to ask the agent to draw.
-- `run.logs`: a real run with prompts + outputs.
+- `scripts/run_camera_agent_interactive.py`: interactive REPL to ask the agent to draw.
+- `docs/logs/run.logs`: a real run with prompts + outputs.
 
 ## What We Built (Technical Journey)
 
 1. Pose teaching
-   We built a learning-mode tool to capture named poses into `poses.json`. These include `top_left`, `top_right`, `bottom_left`, `bottom_right`, `bowl_top`, `bowl_bottom_1`, `bowl_bottom_2`.
+   We built a learning-mode tool to capture named poses into `data/poses.json`. These include `top_left`, `top_right`, `bottom_left`, `bottom_right`, `bowl_top`, `bowl_bottom_1`, `bowl_bottom_2`.
 
 2. Drawing primitives
    Implemented large-stroke motion from normalized 2D points and added paint-refill logic (`bowl_top -> bowl_bottom_1 -> bowl_bottom_2 -> bowl_top`).
@@ -75,7 +75,7 @@ Requires Python 3.13+ (see `pyproject.toml`).
 ### 2) Teach poses (one-time per setup)
 
 ```bash
-uv run teach_poses.py --ip 10.10.10.10 --poses-file poses.json
+uv run scripts/teach_poses.py --ip 10.10.10.10 --poses-file data/poses.json
 ```
 
 Move the arm by hand to each target, press Enter, and name the pose.
@@ -83,7 +83,7 @@ Move the arm by hand to each target, press Enter, and name the pose.
 ### 3) Run the interactive agent
 
 ```bash
-uv run run_camera_agent_interactive.py
+uv run scripts/run_camera_agent_interactive.py
 ```
 
 Example prompt:
@@ -115,18 +115,18 @@ Execution:
 
 - `camera_agent/agent.py`: interactive agent instructions + tools.
 - `camera_agent/arm_tools.py`: drawing primitives and robot execution.
-- `teach_poses.py`: pose capture workflow.
-- `poses.json`: the taught poses for this setup (example).
-- `run.logs`: the session transcript.
+- `scripts/teach_poses.py`: pose capture workflow.
+- `data/poses.json`: the taught poses for this setup (example).
+- `docs/logs/run.logs`: the session transcript.
 - `docs/evidence/*.jpg`: captured evidence images.
 
 ## Demo Scripts
 
-- `run_pose_benchmark.py`: sanity check for paper corners and bowl moves.
-- `run_paint_demo.py`: draws simple shapes with periodic refills.
-- `run_calligraphy_demo.py`: enso + haiku layout (scripted).
-- `run_big_poster_calligraphy.py`: vertical poster-scale strokes.
-- `run_yinyang_poster.py`: yin-yang poster (scripted).
+- `scripts/run_pose_benchmark.py`: sanity check for paper corners and bowl moves.
+- `scripts/run_paint_demo.py`: draws simple shapes with periodic refills.
+- `scripts/run_calligraphy_demo.py`: enso + haiku layout (scripted).
+- `scripts/run_big_poster_calligraphy.py`: vertical poster-scale strokes.
+- `scripts/run_yinyang_poster.py`: yin-yang poster (scripted).
 
 ## Environment Variables
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from _bootstrap import add_repo_root
+add_repo_root()
+
+
 import argparse
 import json
 import os
@@ -97,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ip", default=None, help="Robot IP address (overrides NIRYO_ROBOT_IP).")
     parser.add_argument(
         "--poses-file",
-        default="poses.json",
+        default="data/poses.json",
         help="Path to the JSON file used to store poses.",
     )
     parser.add_argument(

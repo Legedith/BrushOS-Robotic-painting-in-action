@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from _bootstrap import add_repo_root
+add_repo_root()
+
+
 import argparse
 import json
 import math
@@ -301,7 +305,7 @@ def layout_text_block(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Calligraphy + haiku demo.")
     parser.add_argument("--ip", default=None, help="Robot IP (overrides NIRYO_ROBOT_IP).")
-    parser.add_argument("--poses-file", default="poses.json", help="Path to poses JSON.")
+    parser.add_argument("--poses-file", default="data/poses.json", help="Path to poses JSON.")
     parser.add_argument(
         "--pause",
         type=float,

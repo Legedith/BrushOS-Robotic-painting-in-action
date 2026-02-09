@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from _bootstrap import add_repo_root
+add_repo_root()
+
+
 import argparse
 import json
 import os
@@ -51,7 +55,7 @@ def pose_to_list(pose_dict: dict[str, Any]) -> list[float]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a benchmark pose sequence.")
     parser.add_argument("--ip", default=None, help="Robot IP (overrides NIRYO_ROBOT_IP).")
-    parser.add_argument("--poses-file", default="poses.json", help="Path to poses JSON.")
+    parser.add_argument("--poses-file", default="data/poses.json", help="Path to poses JSON.")
     parser.add_argument(
         "--pause",
         type=float,
